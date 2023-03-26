@@ -1,74 +1,83 @@
-% Simultaneous block-diagonalization algorithm
-% based on Maehara and Murota's method
+% Generalized Simultaneous block-diagonalization (GSBD) algorithm
 %
-% Code by F. Vides & Amirhossein Nazerian
+% Code by F. Vides &
+% A. Nazerian
+% 
+% Date of current version: March 25, 2023
 %
-% Example:
+% Ref: 
+% A. Nazerian, F. Vides and F. Sorrentino, "Algebraic Decomposition 
+% of Model Predictive Control Problems," in IEEE Control Systems Letters, 
+% vol. 7, pp. 1441-1446, 2023, doi: 10.1109/LCSYS.2023.3252162.
 %
-% X1 = randn(4);
-% X2 = randn(7);
-% X3 = randn(3);
-% X4 = randn(5);
-% X5 = randn(2);
-% A = blkdiag(X1,X2,X3,X4,X5);
-% X1 = randn(4);
-% X2 = randn(7);
-% X3 = randn(3);
-% X4 = randn(5);
-% X5 = randn(2);
-% B = blkdiag(X1,X2,X3,X4,X5);
-% X1 = randn(4);
-% X2 = randn(7);
-% X3 = randn(3);
-% X4 = randn(5);
-% X5 = randn(2);
-% G = blkdiag(X1,X2,X3,X4,X5);
-% A = kron(diag(randn(1,2)),A);
-% B = kron(diag(randn(1,2)),B);
-% G = kron(diag(randn(1,2)),G);
-% W = orth(randn(length(A)));
-% A = W*A*W.';
-% B = W*B*W.';
-% G = G*W.';
-% [T,X, info] = GSBD({A,B},{G},10,5e-5,5e-4);
-% K = abs(T.'*A*T)>1e-4;
-% subplot(131),spy(K.*(T.'*A*T))
-% K = abs(T.'*B*T)>1e-4;
-% subplot(132),spy(K.*(T.'*B*T))
-% Gt = G*T;
-% Gt = Gt(info.mat_perm{1},:);
-% K = abs(Gt)>1e-4;
-% subplot(133),spy(K.*Gt)
+%% inputs: 
+% A: cell of square matrices for transformation of both sides:
+% At{i} = T'*A{i}*T;
 %
-function [T,X, info] = GSBD(A,G,N,tol,delta,sm)
-    if nargin < 6
-        sm = 0;
-    end
+% G: cell of rectangular matrices for transformation of one sides: 
+% Gt{i} = G{i}*T; Gt{i} = Gt{i}(info.mat_perm{i}, :);
+%
+% N: number of eigenvalues for 'eigs'
+% tol: tolerance for 'eigs'
+% delta: tolerance to set the eintries of the transformed matrix to zero 
+% sprs: run the code using the sparse matrix mode or the full matrix mode
+%       for full matrices, sprs=0
+%       for sparse matrices, sprs=1
+%
+%% outputs:
+% T: square transformation matrix
+%
+% X: commutant matrix
+%
+% info: struct with information about:
+% 1: number of blocks after transformation
+% 2: dimensions of the blocks
+% 3: indices of the blocks for set of transformed At{:} matrices
+% 4: permutation for set of transformed Gt{:} matrices
+% 5: sizes of the blocks of the permuted Gt{:}
+% 6: indexes of the blocks (rows) of the permuted Gt{:}
+
+%% 
+function [T,X, info] = GSBD(A,G,N,tol,delta, sprs)
+    
     n = size(A{1},1);
     la = length(A);
     lg = length(G);
+    
+    if sprs
+        for i = 1:la+lg
+            if i<=la
+                A{i} = sparse(A{i});
+            else
+                G{i-la} = G{i-la};
+            end
+        end
+    end
+    
     E = speye(n);
     K0 = A{1};
-    Sum = rand*A{1};
     K0 = kron(E,K0)-kron(K0.',E);
-    K = K0.'*K0;
+    K = rand*(K0.'*K0);
     K0 = A{1}.';
     K0 = kron(E,K0)-kron(K0.',E);
-    K = K + K0.'*K0;
+    K = K + rand*(K0.'*K0);
     for k = 2:la
         K0 = A{k};
-        Sum = Sum + rand*K0;
         K0 = kron(E,K0)-kron(K0.',E);
-        K = K + K0.'*K0;
+        K = K + rand*(K0.'*K0);
         K0 = A{k}.';
         K0 = kron(E,K0)-kron(K0.',E);
-        K = K + K0.'*K0;
+        K = K + rand*(K0.'*K0);
     end
     for k = 1:lg
-        K0 = G{k}.'*(G{k});
-        Sum = Sum + rand*K0;
+        if sprs
+            D = diag(sparse(rand(size(G{k}, 1), 1)));
+        else
+            D = diag(rand(size(G{k}, 1), 1));
+        end
+        K0 = G{k}.'*D*(G{k});
         K0 = kron(E,K0)-kron(K0.',E);
-        K = K + K0.'*K0;
+        K = K + rand*(K0.'*K0);
     end
     [u,l] = eigs(K,N,tol);
     l = abs(diag(l));
@@ -79,6 +88,7 @@ function [T,X, info] = GSBD(A,G,N,tol,delta,sm)
     X = u(:,f)*c;
     X = reshape(X,n,n);
     X = (X+X.')/2;
+    X(abs(X)<delta) = 0;
     [T,~] = eig(X);
 
     Lq = zeros(n);
@@ -101,7 +111,7 @@ function [T,X, info] = GSBD(A,G,N,tol,delta,sm)
     
         end
     end
-    Adj = double(~~Lq);
+    Adj = double(~~Lq+Lq');
     [bins,~] = conncomp(graph(Adj));
     [~, perm_T] = sort(bins);
     
